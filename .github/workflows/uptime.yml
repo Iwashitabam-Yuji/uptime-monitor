@@ -1,0 +1,63 @@
+name: uptime-check
+
+# value.celm.co.jp の外形監視（HTTPレベル）
+# サーバーが生きていてもサイトが 5xx / タイムアウト / 応答なしになった状態を検知します。
+# Lightsail の組み込みアラーム（サーバー死活・CPU）ではカバーできない層を補完します。
+
+on:
+  schedule:
+    # 5分ごと（※GitHub の都合で実行が遅延する場合があります）
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}   # 手動実行（動作テスト用）
+
+# 前の実行が走っている間は新しい実行を重複させない
+concurrency:
+  group: uptime-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TARGET_URL: "https://value.celm.co.jp/"
+    steps:
+      - name: HTTP ヘルスチェック
+        id: probe
+        run: |
+          set +e
+          last_code="000"
+          # 一時的なブリップでの誤報を避けるため、最大3回リトライ（15秒間隔）
+          for attempt in 1 2 3; do
+            code=$(curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 "$TARGET_URL")
+            [ -z "$code" ] && code="000"
+            echo "Attempt ${attempt}: HTTP ${code}"
+            last_code="$code"
+            # 2xx / 3xx を正常とみなす（リダイレクトは -L で追従）
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+              echo "UP (HTTP ${code})"
+              echo "last_code=${code}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "DOWN — 3回連続で異常（最後の応答: HTTP ${last_code}）"
+          echo "last_code=${last_code}" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: 通知（Webhook を設定している場合のみ・任意）
+        if: failure()
+        env:
+          ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+          LAST_CODE: ${{ steps.probe.outputs.last_code }}
+        run: |
+          if [ -n "$ALERT_WEBHOOK" ]; then
+            # Slack の Incoming Webhook 形式。Discord の場合は "text" を "content" に変更してください。
+            curl -s -X POST "$ALERT_WEBHOOK" \
+              -H 'Content-Type: application/json' \
+              -d "{\"text\":\"🚨 value.celm.co.jp が応答しません（最後の応答: HTTP ${LAST_CODE}）\"}" \
+              > /dev/null
+            echo "Webhook 通知を送信しました"
+          else
+            echo "ALERT_WEBHOOK 未設定。GitHub のワークフロー失敗メールで通知されます。"
+          fi
