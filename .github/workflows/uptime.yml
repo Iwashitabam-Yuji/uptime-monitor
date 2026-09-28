@@ -1,8 +1,8 @@
 name: uptime-check
 
-# value.celm.co.jp の外形監視（HTTPレベル）
+# 外形監視（HTTPレベル）
 # サーバーが生きていてもサイトが 5xx / タイムアウト / 応答なしになった状態を検知します。
-# Lightsail の組み込みアラーム（サーバー死活・CPU）ではカバーできない層を補完します。
+# 監視先を増やすときは、下の matrix.site に1ブロック足すだけです。
 
 on:
   schedule:
@@ -10,20 +10,36 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch: {}   # 手動実行（動作テスト用）
 
-# 前の実行が走っている間は新しい実行を重複させない
-concurrency:
-  group: uptime-check
-  cancel-in-progress: false
-
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      TARGET_URL: "https://value.celm.co.jp/"
+    strategy:
+      fail-fast: false      # 1サイトが落ちても他のサイトの監視は続ける
+      matrix:
+        site:
+          - key: celm
+            name: value.celm.co.jp
+            url: https://value.celm.co.jp/
+            allow_401: "no"
+          - key: polaris
+            name: ポラリスホテルズ＆リゾーツ
+            url: https://www.polaris-hotels.com/
+            allow_401: "yes"    # 2026/10/1の公開後に "no" へ
+          - key: feel
+            name: FEEL THE LOCAL
+            url: https://feel-the-local.polaris-hotels.com/
+            allow_401: "yes"    # 2026/10/1の公開後に "no" へ
+    concurrency:
+      group: uptime-check-${{ matrix.site.key }}
+      cancel-in-progress: false
     steps:
       - name: HTTP ヘルスチェック
         id: probe
+        env:
+          TARGET_URL: ${{ matrix.site.url }}
+          SITE_NAME: ${{ matrix.site.name }}
+          ALLOW_401: ${{ matrix.site.allow_401 }}
         run: |
           set +e
           last_code="000"
@@ -31,10 +47,14 @@ jobs:
           for attempt in 1 2 3; do
             code=$(curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 "$TARGET_URL")
             [ -z "$code" ] && code="000"
-            echo "Attempt ${attempt}: HTTP ${code}"
+            echo "[$SITE_NAME] Attempt ${attempt}: HTTP ${code}"
             last_code="$code"
+            ok="no"
             # 2xx / 3xx を正常とみなす（リダイレクトは -L で追従）
-            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then ok="yes"; fi
+            # 公開前のBasic認証中は401も正常とみなす
+            if [ "$ALLOW_401" = "yes" ] && [ "$code" = "401" ]; then ok="yes"; fi
+            if [ "$ok" = "yes" ]; then
               echo "UP (HTTP ${code})"
               echo "last_code=${code}" >> "$GITHUB_OUTPUT"
               exit 0
@@ -49,13 +69,15 @@ jobs:
         if: failure()
         env:
           ALERT_WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
+          SITE_NAME: ${{ matrix.site.name }}
+          TARGET_URL: ${{ matrix.site.url }}
           LAST_CODE: ${{ steps.probe.outputs.last_code }}
         run: |
           if [ -n "$ALERT_WEBHOOK" ]; then
             # Slack の Incoming Webhook 形式。Discord の場合は "text" を "content" に変更してください。
             curl -s -X POST "$ALERT_WEBHOOK" \
               -H 'Content-Type: application/json' \
-              -d "{\"text\":\"🚨 value.celm.co.jp が応答しません（最後の応答: HTTP ${LAST_CODE}）\"}" \
+              -d "{\"text\":\"🚨 ${SITE_NAME} が応答しません（${TARGET_URL} / 最後の応答: HTTP ${LAST_CODE}）\"}" \
               > /dev/null
             echo "Webhook 通知を送信しました"
           else
