@@ -37,6 +37,7 @@ jobs:
       - name: HTTP ヘルスチェック
         id: probe
         env:
+          UPTIME_TOKEN: ${{ secrets.UPTIME_TOKEN }}
           TARGET_URL: ${{ matrix.site.url }}
           SITE_NAME: ${{ matrix.site.name }}
           ALLOW_401: ${{ matrix.site.allow_401 }}
