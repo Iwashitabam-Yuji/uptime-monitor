@@ -46,7 +46,8 @@ jobs:
           last_code="000"
           # 一時的なブリップでの誤報を避けるため、最大3回リトライ（15秒間隔）
           for attempt in 1 2 3; do
-            code=$(curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 "$TARGET_URL")
+            code=$(curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 \
+              -H "X-Uptime-Monitor: ${UPTIME_TOKEN}" "$TARGET_URL")
             [ -z "$code" ] && code="000"
             echo "[$SITE_NAME] Attempt ${attempt}: HTTP ${code}"
             last_code="$code"
