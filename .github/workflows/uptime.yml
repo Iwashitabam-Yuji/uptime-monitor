@@ -25,11 +25,11 @@ jobs:
           - key: polaris
             name: ポラリスホテルズ＆リゾーツ
             url: https://www.polaris-hotels.com/
-            allow_401: "yes"    # 2026/10/1の公開後に "no" へ
+            allow_401: "no"
           - key: feel
             name: FEEL THE LOCAL
             url: https://feel-the-local.polaris-hotels.com/
-            allow_401: "yes"    # 2026/10/1の公開後に "no" へ
+            allow_401: "no"
     concurrency:
       group: uptime-check-${{ matrix.site.key }}
       cancel-in-progress: false
